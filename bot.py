@@ -416,7 +416,59 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/history", value="View audit logs from the past 24 hours", inline=False)
     embed.add_field(name="/userinfo", value="View information about a user", inline=False)
     embed.add_field(name="/setup", value="Configure roles and log channel (Admin only)", inline=False)
+    embed.add_field(name="/embed", value="Send a custom embed to a channel (Admin only)", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="embed", description="Send a custom embed message to a channel")
+@app_commands.describe(
+    channel="The channel to send the embed to",
+    title="The title of the embed",
+    description="The description/body of the embed",
+    color="The color of the embed (red, green, blue, gold, purple, orange)",
+    image_url="An image or thumbnail URL (Optional)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def embed_command(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    color: str = "blue",
+    image_url: str = ""
+):
+    """Sends a custom embed to a channel. Admin only."""
+    await interaction.response.defer(ephemeral=True)
+
+    color_map = {
+        "red": discord.Color.red(),
+        "green": discord.Color.green(),
+        "blue": discord.Color.blue(),
+        "gold": discord.Color.gold(),
+        "purple": discord.Color.purple(),
+        "orange": discord.Color.orange()
+    }
+    embed_color = color_map.get(color.lower(), discord.Color.blue())
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=embed_color,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    if image_url:
+        embed.set_image(url=image_url)
+
+    embed.set_footer(text=f"Posted by {interaction.user.display_name}")
+
+    try:
+        await channel.send(embed=embed)
+        await interaction.followup.send(f"Embed sent to {channel.mention}!", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permission to send messages in that channel.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
 @bot.tree.error
