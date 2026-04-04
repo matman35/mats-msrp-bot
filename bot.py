@@ -4,11 +4,12 @@ from discord.ext import commands
 import os
 import requests
 from datetime import datetime, timedelta, timezone
+from supabase import create_client, Client
 
-# In-memory storage
-audit_logs = []
-guild_configs = {}
-log_id_counter = 1
+# Supabase setup
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ER:LC API
 ERLC_BASE_URL = "https://api.policeroleplay.community/v1"
@@ -49,30 +50,45 @@ def erlc_headers():
 
 
 def add_log(guild_id: str, action: str, target_user: str, role_name: str, performed_by: str, reason: str, notes: str = "") -> int:
-    global log_id_counter
-    log = {
-        "id": log_id_counter,
-        "guildId": guild_id,
-        "action": action,
-        "targetUser": target_user,
-        "roleName": role_name,
-        "performedBy": performed_by,
-        "reason": reason,
-        "notes": notes,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "isVoided": False
-    }
-    audit_logs.append(log)
-    log_id_counter += 1
-    return log["id"]
+    try:
+        result = supabase.table("audit_logs").insert({
+            "guild_id": guild_id,
+            "action": action,
+            "target_user": target_user,
+            "role_name": role_name,
+            "performed_by": performed_by,
+            "reason": reason,
+            "notes": notes,
+            "is_voided": False
+        }).execute()
+        return result.data[0]["id"] if result.data else 0
+    except Exception as e:
+        print(f"Failed to add log: {e}")
+        return 0
 
 
 def get_guild_config(guild_id: str) -> dict:
-    return guild_configs.get(guild_id, {})
+    try:
+        result = supabase.table("guild_configs").select("*").eq("guild_id", guild_id).execute()
+        return result.data[0] if result.data else {}
+    except Exception as e:
+        print(f"Failed to get guild config: {e}")
+        return {}
+
+
+def save_guild_config(guild_id: str, config: dict):
+    try:
+        existing = supabase.table("guild_configs").select("guild_id").eq("guild_id", guild_id).execute()
+        if existing.data:
+            supabase.table("guild_configs").update(config).eq("guild_id", guild_id).execute()
+        else:
+            supabase.table("guild_configs").insert({"guild_id": guild_id, **config}).execute()
+    except Exception as e:
+        print(f"Failed to save guild config: {e}")
 
 
 async def log_to_channel(guild: discord.Guild, config: dict, embed: discord.Embed):
-    log_channel_id = config.get("logChannelId")
+    log_channel_id = config.get("log_channel_id")
     if not log_channel_id:
         return
     try:
@@ -260,12 +276,12 @@ async def setup(
         await interaction.followup.send("This command must be used in a server.", ephemeral=True)
         return
 
-    guild_configs[str(interaction.guild.id)] = {
-        "staffRoleId": str(staff_role.id),
-        "adminRoleId": str(admin_role.id),
-        "hrRoleId": str(hr_role.id),
-        "logChannelId": str(log_channel.id)
-    }
+    save_guild_config(str(interaction.guild.id), {
+        "staff_role_id": str(staff_role.id),
+        "admin_role_id": str(admin_role.id),
+        "hr_role_id": str(hr_role.id),
+        "log_channel_id": str(log_channel.id)
+    })
 
     add_log(
         str(interaction.guild.id), "setup", "Server Config", "N/A",
@@ -312,7 +328,7 @@ async def promote(interaction: discord.Interaction, member: discord.Member, role
         return
 
     config = get_guild_config(str(interaction.guild.id))
-    hr_role_id = config.get("hrRoleId")
+    hr_role_id = config.get("hr_role_id")
     has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
     is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
 
@@ -377,7 +393,7 @@ async def infraction_issue(interaction: discord.Interaction, member: discord.Mem
         return
 
     config = get_guild_config(str(interaction.guild.id))
-    hr_role_id = config.get("hrRoleId")
+    hr_role_id = config.get("hr_role_id")
     has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
     is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
 
@@ -427,8 +443,8 @@ async def void_infraction(interaction: discord.Interaction, infraction_id: int):
         return
 
     config = get_guild_config(str(interaction.guild.id))
-    hr_role_id = config.get("hrRoleId")
-    admin_role_id = config.get("adminRoleId")
+    hr_role_id = config.get("hr_role_id")
+    admin_role_id = config.get("admin_role_id")
     has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
     is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
     is_admin = any(str(r.id) == admin_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and admin_role_id else False
@@ -437,23 +453,25 @@ async def void_infraction(interaction: discord.Interaction, infraction_id: int):
         await interaction.followup.send("You do not have permission to void infractions. HR or Admin role required.", ephemeral=True)
         return
 
-    target_log = next((log for log in audit_logs if log["id"] == infraction_id), None)
-    if not target_log:
-        await interaction.followup.send(f"Infraction #{infraction_id} not found.", ephemeral=True)
-        return
+    try:
+        result = supabase.table("audit_logs").update({"is_voided": True}).eq("id", infraction_id).execute()
+        if not result.data:
+            await interaction.followup.send(f"Infraction #{infraction_id} not found.", ephemeral=True)
+            return
 
-    target_log["isVoided"] = True
-    add_log(str(interaction.guild.id), "void", f"Infraction #{infraction_id}", "N/A",
-            interaction.user.display_name, "Infraction Voided", f"Voided infraction #{infraction_id}")
+        add_log(str(interaction.guild.id), "void", f"Infraction #{infraction_id}", "N/A",
+                interaction.user.display_name, "Infraction Voided", f"Voided infraction #{infraction_id}")
 
-    embed = discord.Embed(
-        title="Infraction Voided",
-        description=f"Infraction **#{infraction_id}** has been voided by {interaction.user.mention}.",
-        color=discord.Color.orange(),
-        timestamp=interaction.created_at
-    )
-    await interaction.followup.send(embed=embed, ephemeral=True)
-    await log_to_channel(interaction.guild, config, embed)
+        embed = discord.Embed(
+            title="Infraction Voided",
+            description=f"Infraction **#{infraction_id}** has been voided by {interaction.user.mention}.",
+            color=discord.Color.orange(),
+            timestamp=interaction.created_at
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        await log_to_channel(interaction.guild, config, embed)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
 # ──────────────────────────────────────────
@@ -465,19 +483,15 @@ async def history(interaction: discord.Interaction):
     await interaction.response.defer()
 
     now = datetime.now(timezone.utc)
-    one_day_ago = now - timedelta(days=1)
-
+    one_day_ago = (now - timedelta(days=1)).isoformat()
     guild_id = str(interaction.guild.id) if interaction.guild else None
-    recent_logs = []
-    for log in audit_logs:
-        try:
-            if guild_id and log.get("guildId") != guild_id:
-                continue
-            log_time = datetime.fromisoformat(log['timestamp'])
-            if log_time >= one_day_ago:
-                recent_logs.append(log)
-        except (ValueError, KeyError):
-            continue
+
+    try:
+        result = supabase.table("audit_logs").select("*").eq("guild_id", guild_id).gte("timestamp", one_day_ago).order("timestamp", desc=True).execute()
+        recent_logs = result.data or []
+    except Exception as e:
+        await interaction.followup.send(f"Failed to fetch logs: {e}", ephemeral=True)
+        return
 
     if not recent_logs:
         await interaction.followup.send("No audit logs found for the past 24 hours.", ephemeral=True)
@@ -494,10 +508,10 @@ async def history(interaction: discord.Interaction):
         log_entries = []
         for log in chunk:
             action = log.get('action', 'Action').capitalize()
-            target = log.get('targetUser', 'N/A')
-            role = log.get('roleName', 'N/A')
-            by = log.get('performedBy', 'Unknown')
-            voided = log.get('isVoided', False)
+            target = log.get('target_user', 'N/A')
+            role = log.get('role_name', 'N/A')
+            by = log.get('performed_by', 'Unknown')
+            voided = log.get('is_voided', False)
             try:
                 time_str = datetime.fromisoformat(log['timestamp']).strftime("%H:%M:%S")
             except (ValueError, KeyError):
@@ -539,7 +553,13 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
         return
 
     guild_id = str(interaction.guild.id) if interaction.guild else None
-    user_logs = [log for log in audit_logs if log.get('performedBy') == target_member.display_name and (not guild_id or log.get('guildId') == guild_id)]
+
+    try:
+        result = supabase.table("audit_logs").select("*").eq("guild_id", guild_id).eq("performed_by", target_member.display_name).execute()
+        user_logs = result.data or []
+    except Exception as e:
+        user_logs = []
+
     commands_ran = len(user_logs)
     shared_servers = sum(1 for guild in bot.guilds if guild.get_member(target_member.id))
 
@@ -560,7 +580,7 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
         last_actions = []
         for log in user_logs[:5]:
             action = log.get('action', 'Unknown').capitalize()
-            target = log.get('targetUser', 'N/A')
+            target = log.get('target_user', 'N/A')
             try:
                 time_str = datetime.fromisoformat(log['timestamp']).strftime("%H:%M")
             except (ValueError, KeyError):
