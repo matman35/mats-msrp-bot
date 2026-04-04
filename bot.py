@@ -6,21 +6,6 @@ import requests
 from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
 
-# ──────────────────────────────────────────
-# WEBHOOK LOGGING (ADDED)
-# ──────────────────────────────────────────
-
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
-
-def log_webhook(message: str):
-    if not WEBHOOK_URL:
-        return
-    try:
-        requests.post(WEBHOOK_URL, json={"content": message})
-    except:
-        pass
-
-
 # Supabase setup
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
@@ -103,6 +88,7 @@ def save_guild_config(guild_id: str, config: dict):
 
 
 def has_role(user, role_ids_str: str) -> bool:
+    """Check if user has any of the roles in a comma-separated role ID string."""
     if not role_ids_str:
         return False
     role_ids = [r.strip() for r in role_ids_str.split(",") if r.strip()]
@@ -110,6 +96,7 @@ def has_role(user, role_ids_str: str) -> bool:
 
 
 async def send_to_channel(guild: discord.Guild, channel_id: str, embed: discord.Embed):
+    """Send embed to a specific channel by ID."""
     if not channel_id:
         return
     try:
@@ -136,21 +123,9 @@ class MyBot(commands.Bot):
 
 bot = MyBot()
 
-# ──────────────────────────────────────────
-# WEBHOOK COMMAND LOGGING (ADDED)
-# ──────────────────────────────────────────
-
-@bot.event
-async def on_app_command_completion(interaction: discord.Interaction, command):
-    try:
-        name = interaction.command.name if interaction.command else "unknown"
-        log_webhook(f"📌 CMD /{name} | {interaction.user} | {interaction.guild.name if interaction.guild else 'DM'}")
-    except:
-        pass
-
 
 # ──────────────────────────────────────────
-# ERLC COMMANDS (ONLY WEBHOOK ADDED INSIDE)
+# ER:LC COMMANDS
 # ──────────────────────────────────────────
 
 @bot.tree.command(name="erlc_status", description="Shows live ER:LC server status and player count")
@@ -158,9 +133,6 @@ async def erlc_status(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         response = requests.get(f"{ERLC_BASE_URL}/server", headers=erlc_headers(), timeout=10)
-
-        log_webhook(f"ERLC STATUS CHECK by {interaction.user}")
-
         if response.status_code == 200:
             data = response.json()
             embed = discord.Embed(
@@ -174,16 +146,11 @@ async def erlc_status(interaction: discord.Interaction):
             embed.add_field(name="Join Key", value=data.get("JoinKey", "N/A"), inline=True)
             embed.add_field(name="Queue", value=str(data.get("Queue", 0)), inline=True)
             await interaction.followup.send(embed=embed)
-
         elif response.status_code == 422:
-            log_webhook("ERLC STATUS: no session")
             await interaction.followup.send("No active session found. Start a session first!", ephemeral=True)
         else:
-            log_webhook(f"ERLC STATUS FAIL {response.status_code}")
             await interaction.followup.send(f"Failed to fetch server status. Error: {response.status_code}", ephemeral=True)
-
     except Exception as e:
-        log_webhook(f"ERLC STATUS ERROR {e}")
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
@@ -192,27 +159,40 @@ async def players(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         response = requests.get(f"{ERLC_BASE_URL}/server/players", headers=erlc_headers(), timeout=10)
-
-        log_webhook(f"PLAYER LIST requested by {interaction.user}")
-
         if response.status_code == 200:
             data = response.json()
+            if not data:
+                await interaction.followup.send("No players currently in the server.", ephemeral=True)
+                return
 
-            embed = discord.Embed(
-                title=f"🎮 Players Online",
-                color=discord.Color.blue(),
-                timestamp=datetime.now(timezone.utc)
-            )
-            embed.description = "\n".join([f"{p.get('Player')} — {p.get('Team')}" for p in data[:20]])
+            pages = []
+            chunks = [data[i:i+20] for i in range(0, len(data), 20)]
+            for chunk in chunks:
+                embed = discord.Embed(
+                    title=f"🎮 Players Online ({len(data)} total)",
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(timezone.utc)
+                )
+                player_list = []
+                for player in chunk:
+                    name = player.get("Player", "Unknown")
+                    team = player.get("Team", "Unknown")
+                    player_list.append(f"**{name}** — {team}")
+                embed.description = "\n".join(player_list)
+                embed.set_footer(text=f"Page {len(pages)+1} of {len(chunks)}")
+                pages.append(embed)
 
-            await interaction.followup.send(embed=embed)
-
+            if len(pages) == 1:
+                await interaction.followup.send(embed=pages[0])
+            else:
+                view = PaginationView(pages)
+                view.update_buttons()
+                await interaction.followup.send(embed=pages[0], view=view)
+        elif response.status_code == 422:
+            await interaction.followup.send("No active session found.", ephemeral=True)
         else:
-            log_webhook(f"PLAYER LIST FAIL {response.status_code}")
-            await interaction.followup.send("Failed to fetch players.", ephemeral=True)
-
+            await interaction.followup.send(f"Failed to fetch players. Error: {response.status_code}", ephemeral=True)
     except Exception as e:
-        log_webhook(f"PLAYER LIST ERROR {e}")
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
@@ -221,28 +201,36 @@ async def killlogs(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         response = requests.get(f"{ERLC_BASE_URL}/server/killlogs", headers=erlc_headers(), timeout=10)
-
-        log_webhook(f"KILLLOGS requested by {interaction.user}")
-
         if response.status_code == 200:
             data = response.json()
-            embed = discord.Embed(title="💀 Kill Logs", color=discord.Color.red())
+            if not data:
+                await interaction.followup.send("No kill logs found.", ephemeral=True)
+                return
 
-            for log in data[:10]:
-                embed.add_field(
-                    name=f"{log.get('Killer')} → {log.get('Killed')}",
-                    value=log.get("Kill"),
-                    inline=False
-                )
+            embed = discord.Embed(
+                title="💀 Recent Kill Logs",
+                color=discord.Color.red(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            entries = []
+            for log in data[:20]:
+                killer = log.get("Killer", "Unknown")
+                killed = log.get("Killed", "Unknown")
+                weapon = log.get("Kill", "Unknown")
+                entries.append(f"**{killer}** killed **{killed}** with `{weapon}`")
+            embed.description = "\n".join(entries)
 
+            config = get_guild_config(str(interaction.guild.id)) if interaction.guild else {}
+            killlog_channel = config.get("killlog_channel_id")
+            if killlog_channel and interaction.guild:
+                await send_to_channel(interaction.guild, killlog_channel, embed)
             await interaction.followup.send(embed=embed)
-
+        elif response.status_code == 422:
+            await interaction.followup.send("No active session found.", ephemeral=True)
         else:
-            await interaction.followup.send("Failed to fetch kill logs.", ephemeral=True)
-
+            await interaction.followup.send(f"Failed to fetch kill logs. Error: {response.status_code}", ephemeral=True)
     except Exception as e:
-        log_webhook(f"KILLLOG ERROR {e}")
-        await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
 @bot.tree.command(name="modcalls", description="Shows active mod calls from the ER:LC server")
@@ -250,91 +238,533 @@ async def modcalls(interaction: discord.Interaction):
     await interaction.response.defer()
     try:
         response = requests.get(f"{ERLC_BASE_URL}/server/modcalls", headers=erlc_headers(), timeout=10)
-
-        log_webhook(f"MODCALLS requested by {interaction.user}")
-
         if response.status_code == 200:
             data = response.json()
-            embed = discord.Embed(title="📢 Mod Calls", color=discord.Color.orange())
+            if not data:
+                await interaction.followup.send("No active mod calls.", ephemeral=True)
+                return
 
-            for call in data[:10]:
-                embed.add_field(
-                    name=call.get("Caller"),
-                    value=call.get("Reason"),
-                    inline=False
-                )
+            embed = discord.Embed(
+                title="📢 Active Mod Calls",
+                color=discord.Color.orange(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            entries = []
+            for call in data[:20]:
+                caller = call.get("Caller", "Unknown")
+                reason = call.get("Reason", "No reason provided")
+                entries.append(f"**{caller}** — {reason}")
+            embed.description = "\n".join(entries)
 
+            config = get_guild_config(str(interaction.guild.id)) if interaction.guild else {}
+            modcall_channel = config.get("modcall_channel_id")
+            if modcall_channel and interaction.guild:
+                await send_to_channel(interaction.guild, modcall_channel, embed)
             await interaction.followup.send(embed=embed)
-
+        elif response.status_code == 422:
+            await interaction.followup.send("No active session found.", ephemeral=True)
         else:
-            await interaction.followup.send("Failed to fetch mod calls.", ephemeral=True)
-
+            await interaction.followup.send(f"Failed to fetch mod calls. Error: {response.status_code}", ephemeral=True)
     except Exception as e:
-        log_webhook(f"MODCALL ERROR {e}")
-        await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
-
-# ──────────────────────────────────────────
-# SESSION COMMANDS (WEBHOOK ADDED ONLY)
-# ──────────────────────────────────────────
 
 @bot.tree.command(name="session_start", description="Announces a session is starting")
 async def session_start(interaction: discord.Interaction):
     await interaction.response.defer()
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
 
-    log_webhook(f"SESSION START by {interaction.user}")
-
-    # unchanged logic continues...
     config = get_guild_config(str(interaction.guild.id))
     session_channel_id = config.get("session_channel_id")
+    custom_message = config.get("session_ping_message", "A new session is starting! Join now!")
+
+    try:
+        server_data = {}
+        r = requests.get(f"{ERLC_BASE_URL}/server", headers=erlc_headers(), timeout=10)
+        if r.status_code == 200:
+            server_data = r.json()
+    except:
+        pass
 
     embed = discord.Embed(
         title="🚔 Session Starting!",
-        description="A new session is starting!",
+        description=custom_message,
         color=discord.Color.green(),
         timestamp=datetime.now(timezone.utc)
     )
+    if server_data:
+        embed.add_field(name="Players Online", value=str(server_data.get("CurrentPlayers", 0)), inline=True)
+        embed.add_field(name="Join Key", value=server_data.get("JoinKey", "N/A"), inline=True)
+    embed.set_footer(text=f"Started by {interaction.user.display_name}")
 
     if session_channel_id:
         await send_to_channel(interaction.guild, session_channel_id, embed)
+        await interaction.followup.send("Session ping sent!", ephemeral=True)
+    else:
+        await interaction.followup.send(embed=embed)
 
-    await interaction.followup.send("Session started!", ephemeral=True)
+    add_log(str(interaction.guild.id), "session_start", "Server", "N/A", interaction.user.display_name, "Session started")
 
 
 @bot.tree.command(name="session_end", description="Announces a session has ended")
 async def session_end(interaction: discord.Interaction):
     await interaction.response.defer()
-
-    log_webhook(f"SESSION END by {interaction.user}")
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
 
     config = get_guild_config(str(interaction.guild.id))
     session_channel_id = config.get("session_channel_id")
 
     embed = discord.Embed(
         title="🔴 Session Ended",
+        description="The session has ended. Thanks for playing!",
         color=discord.Color.red(),
         timestamp=datetime.now(timezone.utc)
     )
+    embed.set_footer(text=f"Ended by {interaction.user.display_name}")
 
     if session_channel_id:
         await send_to_channel(interaction.guild, session_channel_id, embed)
+        await interaction.followup.send("Session end ping sent!", ephemeral=True)
+    else:
+        await interaction.followup.send(embed=embed)
 
-    await interaction.followup.send("Session ended!", ephemeral=True)
+    add_log(str(interaction.guild.id), "session_end", "Server", "N/A", interaction.user.display_name, "Session ended")
 
 
 # ──────────────────────────────────────────
-# ERROR HANDLER (WEBHOOK ADDED)
+# SETUP
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="setup", description="Configure roles and log channel for this server")
+@app_commands.describe(
+    staff_role="The role for bot staff",
+    admin_role="The role for bot admins",
+    hr_role="The HR role (required for promote/infraction commands)",
+    log_channel="The channel where bot actions will be logged"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def setup(
+    interaction: discord.Interaction,
+    staff_role: discord.Role,
+    admin_role: discord.Role,
+    hr_role: discord.Role,
+    log_channel: discord.TextChannel
+):
+    await interaction.response.defer(ephemeral=True)
+
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
+
+    save_guild_config(str(interaction.guild.id), {
+        "staff_role_id": str(staff_role.id),
+        "admin_role_id": str(admin_role.id),
+        "hr_role_id": str(hr_role.id),
+        "log_channel_id": str(log_channel.id)
+    })
+
+    add_log(
+        str(interaction.guild.id), "setup", "Server Config", "N/A",
+        interaction.user.display_name, "Initial Setup / Role Update",
+        f"Staff: {staff_role.name}, Admin: {admin_role.name}, HR: {hr_role.name}, Log: #{log_channel.name}"
+    )
+
+    await interaction.followup.send(
+        f"Successfully configured server:\n"
+        f"**Staff:** {staff_role.mention}\n"
+        f"**Admin:** {admin_role.mention}\n"
+        f"**HR:** {hr_role.mention}\n"
+        f"**Log Channel:** {log_channel.mention}",
+        ephemeral=True
+    )
+
+
+# ──────────────────────────────────────────
+# PROMOTE
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="promote", description="Promotes a member by adding a role")
+@app_commands.describe(
+    member="The member to promote",
+    role="The role to add",
+    reason="The reason for promotion",
+    notes="Additional notes (Optional)"
+)
+@app_commands.choices(notes=[
+    app_commands.Choice(name="Exceptional Performance", value="Exceptional Performance"),
+    app_commands.Choice(name="Longevity/Loyalty", value="Longevity/Loyalty"),
+    app_commands.Choice(name="Leadership Skills", value="Leadership Skills"),
+    app_commands.Choice(name="Community Contribution", value="Community Contribution")
+])
+async def promote(interaction: discord.Interaction, member: discord.Member, role: discord.Role, reason: str, notes: str = ""):
+    try:
+        await interaction.response.defer(ephemeral=False)
+    except Exception as e:
+        print(f"Failed to defer: {e}")
+        return
+
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
+
+    config = get_guild_config(str(interaction.guild.id))
+    hr_role_id = config.get("hr_role_id")
+    promote_role_ids = config.get("promote_role_ids", "")
+    has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
+    is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
+    has_promote_role = has_role(interaction.user, promote_role_ids) if hasattr(interaction.user, "roles") else False
+
+    if not (is_hr or has_admin_perm or has_promote_role):
+        await interaction.followup.send("You do not have permission to promote members.", ephemeral=True)
+        return
+
+    try:
+        await member.add_roles(role)
+        log_id = add_log(str(interaction.guild.id), "promote", member.display_name, role.name,
+                         interaction.user.display_name, reason, notes)
+
+        embed = discord.Embed(
+            title="Member Promoted",
+            description=f"Successfully promoted {member.mention} to **{role.name}**\n\n**Performed By:** {interaction.user.mention}",
+            color=discord.Color.green(),
+            timestamp=interaction.created_at
+        )
+        embed.add_field(name="Target User", value=member.display_name, inline=True)
+        embed.add_field(name="New Role", value=role.name, inline=True)
+        embed.add_field(name="Action Taken By", value=interaction.user.display_name, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Log ID", value=str(log_id), inline=True)
+        if notes:
+            embed.add_field(name="Notes", value=notes, inline=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        await interaction.followup.send(content=f"{member.mention} {interaction.user.mention}", embed=embed)
+
+        # Send to promote channel if set, otherwise log channel
+        promote_channel = config.get("promote_channel_id") or config.get("log_channel_id")
+        if promote_channel:
+            await send_to_channel(interaction.guild, promote_channel, embed)
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permission to add that role.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# INFRACTION
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="infraction_issue", description="Issues an infraction to a member by removing a role")
+@app_commands.describe(
+    member="The member to issue an infraction to",
+    role="The role to remove",
+    reason="The reason for the infraction",
+    notes="Additional notes (Optional)"
+)
+@app_commands.choices(notes=[
+    app_commands.Choice(name="Inactivity", value="Inactivity"),
+    app_commands.Choice(name="Rule Violation", value="Rule Violation"),
+    app_commands.Choice(name="Request", value="Request"),
+    app_commands.Choice(name="Other", value="Other")
+])
+async def infraction_issue(interaction: discord.Interaction, member: discord.Member, role: discord.Role, reason: str, notes: str = ""):
+    try:
+        await interaction.response.defer(ephemeral=False)
+    except Exception as e:
+        print(f"Failed to defer: {e}")
+        return
+
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
+
+    config = get_guild_config(str(interaction.guild.id))
+    hr_role_id = config.get("hr_role_id")
+    infraction_role_ids = config.get("infraction_role_ids", "")
+    has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
+    is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
+    has_infraction_role = has_role(interaction.user, infraction_role_ids) if hasattr(interaction.user, "roles") else False
+
+    if not (is_hr or has_admin_perm or has_infraction_role):
+        await interaction.followup.send("You do not have permission to issue infractions.", ephemeral=True)
+        return
+
+    try:
+        await member.remove_roles(role)
+        log_id = add_log(str(interaction.guild.id), "infraction", member.display_name, role.name,
+                         interaction.user.display_name, reason, notes)
+
+        embed = discord.Embed(
+            title="Infraction Issued",
+            description=f"Successfully issued infraction to {member.mention} by removing **{role.name}**\n\n**Performed By:** {interaction.user.mention}",
+            color=discord.Color.red(),
+            timestamp=interaction.created_at
+        )
+        embed.add_field(name="Target User", value=member.display_name, inline=True)
+        embed.add_field(name="Removed Role", value=role.name, inline=True)
+        embed.add_field(name="Action Taken By", value=interaction.user.display_name, inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Infraction ID", value=str(log_id), inline=True)
+        if notes:
+            embed.add_field(name="Notes", value=notes, inline=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        await interaction.followup.send(content=f"{member.mention} {interaction.user.mention}", embed=embed)
+
+        infraction_channel = config.get("infraction_channel_id") or config.get("log_channel_id")
+        if infraction_channel:
+            await send_to_channel(interaction.guild, infraction_channel, embed)
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permission to remove that role.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# VOID INFRACTION
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="void_infraction", description="Voids an infraction using its ID")
+@app_commands.describe(infraction_id="The ID of the infraction to void")
+async def void_infraction(interaction: discord.Interaction, infraction_id: int):
+    await interaction.response.defer(ephemeral=True)
+
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
+
+    config = get_guild_config(str(interaction.guild.id))
+    hr_role_id = config.get("hr_role_id")
+    admin_role_id = config.get("admin_role_id")
+    void_role_ids = config.get("void_role_ids", "")
+    has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
+    is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
+    is_admin = any(str(r.id) == admin_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and admin_role_id else False
+    has_void_role = has_role(interaction.user, void_role_ids) if hasattr(interaction.user, "roles") else False
+
+    if not (is_hr or is_admin or has_admin_perm or has_void_role):
+        await interaction.followup.send("You do not have permission to void infractions.", ephemeral=True)
+        return
+
+    try:
+        result = supabase.table("audit_logs").update({"is_voided": True}).eq("id", infraction_id).execute()
+        if not result.data:
+            await interaction.followup.send(f"Infraction #{infraction_id} not found.", ephemeral=True)
+            return
+
+        add_log(str(interaction.guild.id), "void", f"Infraction #{infraction_id}", "N/A",
+                interaction.user.display_name, "Infraction Voided", f"Voided infraction #{infraction_id}")
+
+        embed = discord.Embed(
+            title="Infraction Voided",
+            description=f"Infraction **#{infraction_id}** has been voided by {interaction.user.mention}.",
+            color=discord.Color.orange(),
+            timestamp=interaction.created_at
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        void_channel = config.get("void_channel_id") or config.get("log_channel_id")
+        if void_channel:
+            await send_to_channel(interaction.guild, void_channel, embed)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# HISTORY
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="history", description="Shows audit logs from the past 24 hours")
+async def history(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    now = datetime.now(timezone.utc)
+    one_day_ago = (now - timedelta(days=1)).isoformat()
+    guild_id = str(interaction.guild.id) if interaction.guild else None
+
+    try:
+        result = supabase.table("audit_logs").select("*").eq("guild_id", guild_id).gte("timestamp", one_day_ago).order("timestamp", desc=True).execute()
+        recent_logs = result.data or []
+    except Exception as e:
+        await interaction.followup.send(f"Failed to fetch logs: {e}", ephemeral=True)
+        return
+
+    if not recent_logs:
+        await interaction.followup.send("No audit logs found for the past 24 hours.", ephemeral=True)
+        return
+
+    pages = []
+    for i in range(0, len(recent_logs), 20):
+        chunk = recent_logs[i:i + 20]
+        embed = discord.Embed(title="Audit Log History (Past 24h)", color=discord.Color.blue(), timestamp=now)
+        log_entries = []
+        for log in chunk:
+            action = log.get('action', 'Action').capitalize()
+            target = log.get('target_user', 'N/A')
+            role = log.get('role_name', 'N/A')
+            by = log.get('performed_by', 'Unknown')
+            voided = log.get('is_voided', False)
+            try:
+                time_str = datetime.fromisoformat(log['timestamp']).strftime("%H:%M:%S")
+            except:
+                time_str = "00:00:00"
+            voided_str = " ~~VOIDED~~" if voided else ""
+            if action.lower() in ["promote", "demote"]:
+                log_entries.append(f"`{time_str}` **{action}** {target} ({role}) by {by}{voided_str}")
+            else:
+                log_entries.append(f"`{time_str}` **{action}** on {target} by {by}{voided_str}")
+        embed.description = "\n".join(log_entries)
+        embed.set_footer(text=f"Page {len(pages) + 1} of {(len(recent_logs) - 1) // 20 + 1}")
+        pages.append(embed)
+
+    if len(pages) == 1:
+        await interaction.followup.send(embed=pages[0])
+    else:
+        view = PaginationView(pages)
+        view.update_buttons()
+        await interaction.followup.send(embed=pages[0], view=view)
+
+
+# ──────────────────────────────────────────
+# USERINFO
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="userinfo", description="Displays information about a user")
+@app_commands.describe(member="The member to get information about")
+async def userinfo(interaction: discord.Interaction, member: discord.Member = None):
+    await interaction.response.defer()
+
+    target_member: discord.Member
+    if member is not None:
+        target_member = member
+    elif isinstance(interaction.user, discord.Member):
+        target_member = interaction.user
+    else:
+        await interaction.followup.send("Could not find member information.", ephemeral=True)
+        return
+
+    guild_id = str(interaction.guild.id) if interaction.guild else None
+
+    try:
+        result = supabase.table("audit_logs").select("*").eq("guild_id", guild_id).eq("performed_by", target_member.display_name).execute()
+        user_logs = result.data or []
+    except:
+        user_logs = []
+
+    commands_ran = len(user_logs)
+    shared_servers = sum(1 for guild in bot.guilds if guild.get_member(target_member.id))
+
+    embed = discord.Embed(title=f"User Information - {target_member.display_name}", color=discord.Color.blue(), timestamp=interaction.created_at)
+    embed.set_thumbnail(url=target_member.display_avatar.url)
+    embed.add_field(name="Username", value=target_member.name, inline=True)
+    embed.add_field(name="ID", value=str(target_member.id), inline=True)
+    embed.add_field(name="Account Created", value=target_member.created_at.strftime("%b %d, %Y"), inline=True)
+    embed.add_field(name="Joined Server", value=target_member.joined_at.strftime("%b %d, %Y") if target_member.joined_at else "Unknown", inline=True)
+    embed.add_field(name="Bot Commands Ran", value=str(commands_ran), inline=True)
+    embed.add_field(name="Servers with Bot", value=str(shared_servers), inline=True)
+
+    if user_logs:
+        last_actions = []
+        for log in user_logs[:5]:
+            action = log.get('action', 'Unknown').capitalize()
+            target = log.get('target_user', 'N/A')
+            try:
+                time_str = datetime.fromisoformat(log['timestamp']).strftime("%H:%M")
+            except:
+                time_str = "00:00"
+            last_actions.append(f"`{time_str}` **{action}** on {target}")
+        embed.add_field(name="Recent Actions", value="\n".join(last_actions), inline=False)
+
+    roles = [role.mention for role in target_member.roles[1:]]
+    embed.add_field(name=f"Roles [{len(roles)}]", value=" ".join(roles) if roles else "None", inline=False)
+    await interaction.followup.send(embed=embed)
+
+
+# ──────────────────────────────────────────
+# HELP
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="help", description="Get help with the bot commands")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(title="Maryland State Roleplay Bot - Command Help", description="Here are the available commands:", color=discord.Color.purple())
+    embed.add_field(name="/promote", value="Promote a member (HR role required)", inline=False)
+    embed.add_field(name="/infraction_issue", value="Issue an infraction to a member (HR role required)", inline=False)
+    embed.add_field(name="/void_infraction", value="Void an infraction by ID (HR/Admin required)", inline=False)
+    embed.add_field(name="/history", value="View audit logs from the past 24 hours", inline=False)
+    embed.add_field(name="/userinfo", value="View information about a user", inline=False)
+    embed.add_field(name="/setup", value="Configure roles and log channel (Admin only)", inline=False)
+    embed.add_field(name="/embed", value="Send a custom embed to a channel (Admin only)", inline=False)
+    embed.add_field(name="─── ER:LC ───", value="\u200b", inline=False)
+    embed.add_field(name="/erlc_status", value="View live server status and player count", inline=False)
+    embed.add_field(name="/players", value="View who is currently in the ER:LC server", inline=False)
+    embed.add_field(name="/killlogs", value="View recent kill logs", inline=False)
+    embed.add_field(name="/modcalls", value="View active mod calls", inline=False)
+    embed.add_field(name="/session_start", value="Announce a session is starting", inline=False)
+    embed.add_field(name="/session_end", value="Announce a session has ended", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# EMBED
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="embed", description="Send a custom embed message to a channel")
+@app_commands.describe(
+    channel="The channel to send the embed to",
+    title="The title of the embed",
+    description="The description/body of the embed",
+    color="The color of the embed (red, green, blue, gold, purple, orange)",
+    image_url="An image or thumbnail URL (Optional)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def embed_command(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    color: str = "blue",
+    image_url: str = ""
+):
+    await interaction.response.defer(ephemeral=True)
+
+    color_map = {
+        "red": discord.Color.red(),
+        "green": discord.Color.green(),
+        "blue": discord.Color.blue(),
+        "gold": discord.Color.gold(),
+        "purple": discord.Color.purple(),
+        "orange": discord.Color.orange()
+    }
+    embed_color = color_map.get(color.lower(), discord.Color.blue())
+
+    embed = discord.Embed(title=title, description=description, color=embed_color, timestamp=datetime.now(timezone.utc))
+    if image_url:
+        embed.set_image(url=image_url)
+    embed.set_footer(text=f"Posted by {interaction.user.display_name}")
+
+    try:
+        await channel.send(embed=embed)
+        await interaction.followup.send(f"Embed sent to {channel.mention}!", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permission to send messages in that channel.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# ERROR HANDLER
 # ──────────────────────────────────────────
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    log_webhook(f"ERROR: {error}")
-
     if isinstance(error, app_commands.MissingPermissions):
         msg = "You don't have permission to use this command."
     else:
         msg = f"An error occurred: {error}"
-
     if not interaction.response.is_done():
         await interaction.response.send_message(msg, ephemeral=True)
     else:
