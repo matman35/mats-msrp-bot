@@ -87,16 +87,24 @@ def save_guild_config(guild_id: str, config: dict):
         print(f"Failed to save guild config: {e}")
 
 
-async def log_to_channel(guild: discord.Guild, config: dict, embed: discord.Embed):
-    log_channel_id = config.get("log_channel_id")
-    if not log_channel_id:
+def has_role(user, role_ids_str: str) -> bool:
+    """Check if user has any of the roles in a comma-separated role ID string."""
+    if not role_ids_str:
+        return False
+    role_ids = [r.strip() for r in role_ids_str.split(",") if r.strip()]
+    return any(str(r.id) in role_ids for r in user.roles)
+
+
+async def send_to_channel(guild: discord.Guild, channel_id: str, embed: discord.Embed):
+    """Send embed to a specific channel by ID."""
+    if not channel_id:
         return
     try:
-        channel = guild.get_channel(int(log_channel_id))
+        channel = guild.get_channel(int(channel_id))
         if channel and isinstance(channel, discord.TextChannel):
             await channel.send(embed=embed)
     except Exception as e:
-        print(f"Failed to send log to channel: {e}")
+        print(f"Failed to send to channel {channel_id}: {e}")
 
 
 class MyBot(commands.Bot):
@@ -211,6 +219,11 @@ async def killlogs(interaction: discord.Interaction):
                 weapon = log.get("Kill", "Unknown")
                 entries.append(f"**{killer}** killed **{killed}** with `{weapon}`")
             embed.description = "\n".join(entries)
+
+            config = get_guild_config(str(interaction.guild.id)) if interaction.guild else {}
+            killlog_channel = config.get("killlog_channel_id")
+            if killlog_channel and interaction.guild:
+                await send_to_channel(interaction.guild, killlog_channel, embed)
             await interaction.followup.send(embed=embed)
         elif response.status_code == 422:
             await interaction.followup.send("No active session found.", ephemeral=True)
@@ -242,6 +255,11 @@ async def modcalls(interaction: discord.Interaction):
                 reason = call.get("Reason", "No reason provided")
                 entries.append(f"**{caller}** — {reason}")
             embed.description = "\n".join(entries)
+
+            config = get_guild_config(str(interaction.guild.id)) if interaction.guild else {}
+            modcall_channel = config.get("modcall_channel_id")
+            if modcall_channel and interaction.guild:
+                await send_to_channel(interaction.guild, modcall_channel, embed)
             await interaction.followup.send(embed=embed)
         elif response.status_code == 422:
             await interaction.followup.send("No active session found.", ephemeral=True)
@@ -249,6 +267,72 @@ async def modcalls(interaction: discord.Interaction):
             await interaction.followup.send(f"Failed to fetch mod calls. Error: {response.status_code}", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="session_start", description="Announces a session is starting")
+async def session_start(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
+
+    config = get_guild_config(str(interaction.guild.id))
+    session_channel_id = config.get("session_channel_id")
+    custom_message = config.get("session_ping_message", "A new session is starting! Join now!")
+
+    try:
+        server_data = {}
+        r = requests.get(f"{ERLC_BASE_URL}/server", headers=erlc_headers(), timeout=10)
+        if r.status_code == 200:
+            server_data = r.json()
+    except:
+        pass
+
+    embed = discord.Embed(
+        title="🚔 Session Starting!",
+        description=custom_message,
+        color=discord.Color.green(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    if server_data:
+        embed.add_field(name="Players Online", value=str(server_data.get("CurrentPlayers", 0)), inline=True)
+        embed.add_field(name="Join Key", value=server_data.get("JoinKey", "N/A"), inline=True)
+    embed.set_footer(text=f"Started by {interaction.user.display_name}")
+
+    if session_channel_id:
+        await send_to_channel(interaction.guild, session_channel_id, embed)
+        await interaction.followup.send("Session ping sent!", ephemeral=True)
+    else:
+        await interaction.followup.send(embed=embed)
+
+    add_log(str(interaction.guild.id), "session_start", "Server", "N/A", interaction.user.display_name, "Session started")
+
+
+@bot.tree.command(name="session_end", description="Announces a session has ended")
+async def session_end(interaction: discord.Interaction):
+    await interaction.response.defer()
+    if not interaction.guild:
+        await interaction.followup.send("This command must be used in a server.", ephemeral=True)
+        return
+
+    config = get_guild_config(str(interaction.guild.id))
+    session_channel_id = config.get("session_channel_id")
+
+    embed = discord.Embed(
+        title="🔴 Session Ended",
+        description="The session has ended. Thanks for playing!",
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text=f"Ended by {interaction.user.display_name}")
+
+    if session_channel_id:
+        await send_to_channel(interaction.guild, session_channel_id, embed)
+        await interaction.followup.send("Session end ping sent!", ephemeral=True)
+    else:
+        await interaction.followup.send(embed=embed)
+
+    add_log(str(interaction.guild.id), "session_end", "Server", "N/A", interaction.user.display_name, "Session ended")
 
 
 # ──────────────────────────────────────────
@@ -329,11 +413,13 @@ async def promote(interaction: discord.Interaction, member: discord.Member, role
 
     config = get_guild_config(str(interaction.guild.id))
     hr_role_id = config.get("hr_role_id")
+    promote_role_ids = config.get("promote_role_ids", "")
     has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
     is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
+    has_promote_role = has_role(interaction.user, promote_role_ids) if hasattr(interaction.user, "roles") else False
 
-    if not (is_hr or has_admin_perm):
-        await interaction.followup.send("You do not have permission to promote members. The HR role is required.", ephemeral=True)
+    if not (is_hr or has_admin_perm or has_promote_role):
+        await interaction.followup.send("You do not have permission to promote members.", ephemeral=True)
         return
 
     try:
@@ -357,7 +443,11 @@ async def promote(interaction: discord.Interaction, member: discord.Member, role
         embed.set_thumbnail(url=member.display_avatar.url)
 
         await interaction.followup.send(content=f"{member.mention} {interaction.user.mention}", embed=embed)
-        await log_to_channel(interaction.guild, config, embed)
+
+        # Send to promote channel if set, otherwise log channel
+        promote_channel = config.get("promote_channel_id") or config.get("log_channel_id")
+        if promote_channel:
+            await send_to_channel(interaction.guild, promote_channel, embed)
     except discord.Forbidden:
         await interaction.followup.send("I don't have permission to add that role.", ephemeral=True)
     except Exception as e:
@@ -394,11 +484,13 @@ async def infraction_issue(interaction: discord.Interaction, member: discord.Mem
 
     config = get_guild_config(str(interaction.guild.id))
     hr_role_id = config.get("hr_role_id")
+    infraction_role_ids = config.get("infraction_role_ids", "")
     has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
     is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
+    has_infraction_role = has_role(interaction.user, infraction_role_ids) if hasattr(interaction.user, "roles") else False
 
-    if not (is_hr or has_admin_perm):
-        await interaction.followup.send("You do not have permission to issue infractions. The HR role is required.", ephemeral=True)
+    if not (is_hr or has_admin_perm or has_infraction_role):
+        await interaction.followup.send("You do not have permission to issue infractions.", ephemeral=True)
         return
 
     try:
@@ -422,7 +514,10 @@ async def infraction_issue(interaction: discord.Interaction, member: discord.Mem
         embed.set_thumbnail(url=member.display_avatar.url)
 
         await interaction.followup.send(content=f"{member.mention} {interaction.user.mention}", embed=embed)
-        await log_to_channel(interaction.guild, config, embed)
+
+        infraction_channel = config.get("infraction_channel_id") or config.get("log_channel_id")
+        if infraction_channel:
+            await send_to_channel(interaction.guild, infraction_channel, embed)
     except discord.Forbidden:
         await interaction.followup.send("I don't have permission to remove that role.", ephemeral=True)
     except Exception as e:
@@ -445,12 +540,14 @@ async def void_infraction(interaction: discord.Interaction, infraction_id: int):
     config = get_guild_config(str(interaction.guild.id))
     hr_role_id = config.get("hr_role_id")
     admin_role_id = config.get("admin_role_id")
+    void_role_ids = config.get("void_role_ids", "")
     has_admin_perm = interaction.user.guild_permissions.administrator if hasattr(interaction.user, "guild_permissions") else False
     is_hr = any(str(r.id) == hr_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and hr_role_id else False
     is_admin = any(str(r.id) == admin_role_id for r in interaction.user.roles) if hasattr(interaction.user, "roles") and admin_role_id else False
+    has_void_role = has_role(interaction.user, void_role_ids) if hasattr(interaction.user, "roles") else False
 
-    if not (is_hr or is_admin or has_admin_perm):
-        await interaction.followup.send("You do not have permission to void infractions. HR or Admin role required.", ephemeral=True)
+    if not (is_hr or is_admin or has_admin_perm or has_void_role):
+        await interaction.followup.send("You do not have permission to void infractions.", ephemeral=True)
         return
 
     try:
@@ -469,7 +566,10 @@ async def void_infraction(interaction: discord.Interaction, infraction_id: int):
             timestamp=interaction.created_at
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
-        await log_to_channel(interaction.guild, config, embed)
+
+        void_channel = config.get("void_channel_id") or config.get("log_channel_id")
+        if void_channel:
+            await send_to_channel(interaction.guild, void_channel, embed)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
@@ -500,11 +600,7 @@ async def history(interaction: discord.Interaction):
     pages = []
     for i in range(0, len(recent_logs), 20):
         chunk = recent_logs[i:i + 20]
-        embed = discord.Embed(
-            title="Audit Log History (Past 24h)",
-            color=discord.Color.blue(),
-            timestamp=now
-        )
+        embed = discord.Embed(title="Audit Log History (Past 24h)", color=discord.Color.blue(), timestamp=now)
         log_entries = []
         for log in chunk:
             action = log.get('action', 'Action').capitalize()
@@ -514,14 +610,13 @@ async def history(interaction: discord.Interaction):
             voided = log.get('is_voided', False)
             try:
                 time_str = datetime.fromisoformat(log['timestamp']).strftime("%H:%M:%S")
-            except (ValueError, KeyError):
+            except:
                 time_str = "00:00:00"
             voided_str = " ~~VOIDED~~" if voided else ""
             if action.lower() in ["promote", "demote"]:
                 log_entries.append(f"`{time_str}` **{action}** {target} ({role}) by {by}{voided_str}")
             else:
                 log_entries.append(f"`{time_str}` **{action}** on {target} by {by}{voided_str}")
-
         embed.description = "\n".join(log_entries)
         embed.set_footer(text=f"Page {len(pages) + 1} of {(len(recent_logs) - 1) // 20 + 1}")
         pages.append(embed)
@@ -557,17 +652,13 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
     try:
         result = supabase.table("audit_logs").select("*").eq("guild_id", guild_id).eq("performed_by", target_member.display_name).execute()
         user_logs = result.data or []
-    except Exception as e:
+    except:
         user_logs = []
 
     commands_ran = len(user_logs)
     shared_servers = sum(1 for guild in bot.guilds if guild.get_member(target_member.id))
 
-    embed = discord.Embed(
-        title=f"User Information - {target_member.display_name}",
-        color=discord.Color.blue(),
-        timestamp=interaction.created_at
-    )
+    embed = discord.Embed(title=f"User Information - {target_member.display_name}", color=discord.Color.blue(), timestamp=interaction.created_at)
     embed.set_thumbnail(url=target_member.display_avatar.url)
     embed.add_field(name="Username", value=target_member.name, inline=True)
     embed.add_field(name="ID", value=str(target_member.id), inline=True)
@@ -583,14 +674,13 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
             target = log.get('target_user', 'N/A')
             try:
                 time_str = datetime.fromisoformat(log['timestamp']).strftime("%H:%M")
-            except (ValueError, KeyError):
+            except:
                 time_str = "00:00"
             last_actions.append(f"`{time_str}` **{action}** on {target}")
         embed.add_field(name="Recent Actions", value="\n".join(last_actions), inline=False)
 
     roles = [role.mention for role in target_member.roles[1:]]
     embed.add_field(name=f"Roles [{len(roles)}]", value=" ".join(roles) if roles else "None", inline=False)
-
     await interaction.followup.send(embed=embed)
 
 
@@ -600,11 +690,7 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
 
 @bot.tree.command(name="help", description="Get help with the bot commands")
 async def help_command(interaction: discord.Interaction):
-    embed = discord.Embed(
-        title="Maryland State Roleplay Bot - Command Help",
-        description="Here are the available commands:",
-        color=discord.Color.purple()
-    )
+    embed = discord.Embed(title="Maryland State Roleplay Bot - Command Help", description="Here are the available commands:", color=discord.Color.purple())
     embed.add_field(name="/promote", value="Promote a member (HR role required)", inline=False)
     embed.add_field(name="/infraction_issue", value="Issue an infraction to a member (HR role required)", inline=False)
     embed.add_field(name="/void_infraction", value="Void an infraction by ID (HR/Admin required)", inline=False)
@@ -617,6 +703,8 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/players", value="View who is currently in the ER:LC server", inline=False)
     embed.add_field(name="/killlogs", value="View recent kill logs", inline=False)
     embed.add_field(name="/modcalls", value="View active mod calls", inline=False)
+    embed.add_field(name="/session_start", value="Announce a session is starting", inline=False)
+    embed.add_field(name="/session_end", value="Announce a session has ended", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -653,16 +741,9 @@ async def embed_command(
     }
     embed_color = color_map.get(color.lower(), discord.Color.blue())
 
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=embed_color,
-        timestamp=datetime.now(timezone.utc)
-    )
-
+    embed = discord.Embed(title=title, description=description, color=embed_color, timestamp=datetime.now(timezone.utc))
     if image_url:
         embed.set_image(url=image_url)
-
     embed.set_footer(text=f"Posted by {interaction.user.display_name}")
 
     try:
