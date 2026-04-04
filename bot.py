@@ -100,9 +100,9 @@ class MyBot(commands.Bot):
 bot = MyBot()
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # ER:LC COMMANDS
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="erlc_status", description="Shows live ER:LC server status and player count")
 async def erlc_status(interaction: discord.Interaction):
@@ -112,7 +112,7 @@ async def erlc_status(interaction: discord.Interaction):
         if response.status_code == 200:
             data = response.json()
             embed = discord.Embed(
-                title="\ud83d\ude94 ER:LC Server Status",
+                title="🚔 ER:LC Server Status",
                 color=discord.Color.green(),
                 timestamp=datetime.now(timezone.utc)
             )
@@ -145,7 +145,7 @@ async def players(interaction: discord.Interaction):
             chunks = [data[i:i+20] for i in range(0, len(data), 20)]
             for chunk in chunks:
                 embed = discord.Embed(
-                    title=f"\ud83c\udfae Players Online ({len(data)} total)",
+                    title=f"🎮 Players Online ({len(data)} total)",
                     color=discord.Color.blue(),
                     timestamp=datetime.now(timezone.utc)
                 )
@@ -153,7 +153,7 @@ async def players(interaction: discord.Interaction):
                 for player in chunk:
                     name = player.get("Player", "Unknown")
                     team = player.get("Team", "Unknown")
-                    player_list.append(f"**{name}** \u2014 {team}")
+                    player_list.append(f"**{name}** — {team}")
                 embed.description = "\n".join(player_list)
                 embed.set_footer(text=f"Page {len(pages)+1} of {len(chunks)}")
                 pages.append(embed)
@@ -184,7 +184,7 @@ async def killlogs(interaction: discord.Interaction):
                 return
 
             embed = discord.Embed(
-                title="\ud83d\udc80 Recent Kill Logs",
+                title="💀 Recent Kill Logs",
                 color=discord.Color.red(),
                 timestamp=datetime.now(timezone.utc)
             )
@@ -216,7 +216,7 @@ async def modcalls(interaction: discord.Interaction):
                 return
 
             embed = discord.Embed(
-                title="\ud83d\udce2 Active Mod Calls",
+                title="📢 Active Mod Calls",
                 color=discord.Color.orange(),
                 timestamp=datetime.now(timezone.utc)
             )
@@ -224,7 +224,7 @@ async def modcalls(interaction: discord.Interaction):
             for call in data[:20]:
                 caller = call.get("Caller", "Unknown")
                 reason = call.get("Reason", "No reason provided")
-                entries.append(f"**{caller}** \u2014 {reason}")
+                entries.append(f"**{caller}** — {reason}")
             embed.description = "\n".join(entries)
             await interaction.followup.send(embed=embed)
         elif response.status_code == 422:
@@ -235,9 +235,9 @@ async def modcalls(interaction: discord.Interaction):
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # SETUP
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="setup", description="Configure roles and log channel for this server")
 @app_commands.describe(
@@ -283,9 +283,9 @@ async def setup(
     )
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # PROMOTE
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="promote", description="Promotes a member by adding a role")
 @app_commands.describe(
@@ -348,9 +348,9 @@ async def promote(interaction: discord.Interaction, member: discord.Member, role
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # INFRACTION
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="infraction_issue", description="Issues an infraction to a member by removing a role")
 @app_commands.describe(
@@ -413,9 +413,9 @@ async def infraction_issue(interaction: discord.Interaction, member: discord.Mem
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # VOID INFRACTION
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="void_infraction", description="Voids an infraction using its ID")
 @app_commands.describe(infraction_id="The ID of the infraction to void")
@@ -456,9 +456,9 @@ async def void_infraction(interaction: discord.Interaction, infraction_id: int):
     await log_to_channel(interaction.guild, config, embed)
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # HISTORY
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="history", description="Shows audit logs from the past 24 hours")
 async def history(interaction: discord.Interaction):
@@ -520,9 +520,9 @@ async def history(interaction: discord.Interaction):
         await interaction.followup.send(embed=pages[0], view=view)
 
 
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 # USERINFO
-# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# ──────────────────────────────────────────
 
 @bot.tree.command(name="userinfo", description="Displays information about a user")
 @app_commands.describe(member="The member to get information about")
@@ -569,4 +569,105 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
         embed.add_field(name="Recent Actions", value="\n".join(last_actions), inline=False)
 
     roles = [role.mention for role in target_member.roles[1:]]
-    embed.
+    embed.add_field(name=f"Roles [{len(roles)}]", value=" ".join(roles) if roles else "None", inline=False)
+
+    await interaction.followup.send(embed=embed)
+
+
+# ──────────────────────────────────────────
+# HELP
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="help", description="Get help with the bot commands")
+async def help_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Maryland State Roleplay Bot - Command Help",
+        description="Here are the available commands:",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="/promote", value="Promote a member (HR role required)", inline=False)
+    embed.add_field(name="/infraction_issue", value="Issue an infraction to a member (HR role required)", inline=False)
+    embed.add_field(name="/void_infraction", value="Void an infraction by ID (HR/Admin required)", inline=False)
+    embed.add_field(name="/history", value="View audit logs from the past 24 hours", inline=False)
+    embed.add_field(name="/userinfo", value="View information about a user", inline=False)
+    embed.add_field(name="/setup", value="Configure roles and log channel (Admin only)", inline=False)
+    embed.add_field(name="/embed", value="Send a custom embed to a channel (Admin only)", inline=False)
+    embed.add_field(name="─── ER:LC ───", value="\u200b", inline=False)
+    embed.add_field(name="/erlc_status", value="View live server status and player count", inline=False)
+    embed.add_field(name="/players", value="View who is currently in the ER:LC server", inline=False)
+    embed.add_field(name="/killlogs", value="View recent kill logs", inline=False)
+    embed.add_field(name="/modcalls", value="View active mod calls", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# EMBED
+# ──────────────────────────────────────────
+
+@bot.tree.command(name="embed", description="Send a custom embed message to a channel")
+@app_commands.describe(
+    channel="The channel to send the embed to",
+    title="The title of the embed",
+    description="The description/body of the embed",
+    color="The color of the embed (red, green, blue, gold, purple, orange)",
+    image_url="An image or thumbnail URL (Optional)"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def embed_command(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+    title: str,
+    description: str,
+    color: str = "blue",
+    image_url: str = ""
+):
+    await interaction.response.defer(ephemeral=True)
+
+    color_map = {
+        "red": discord.Color.red(),
+        "green": discord.Color.green(),
+        "blue": discord.Color.blue(),
+        "gold": discord.Color.gold(),
+        "purple": discord.Color.purple(),
+        "orange": discord.Color.orange()
+    }
+    embed_color = color_map.get(color.lower(), discord.Color.blue())
+
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=embed_color,
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    if image_url:
+        embed.set_image(url=image_url)
+
+    embed.set_footer(text=f"Posted by {interaction.user.display_name}")
+
+    try:
+        await channel.send(embed=embed)
+        await interaction.followup.send(f"Embed sent to {channel.mention}!", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("I don't have permission to send messages in that channel.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+
+
+# ──────────────────────────────────────────
+# ERROR HANDLER
+# ──────────────────────────────────────────
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You don't have permission to use this command."
+    else:
+        msg = f"An error occurred: {error}"
+    if not interaction.response.is_done():
+        await interaction.response.send_message(msg, ephemeral=True)
+    else:
+        await interaction.followup.send(msg, ephemeral=True)
+
+
+bot.run(os.environ["DISCORD_TOKEN"])
