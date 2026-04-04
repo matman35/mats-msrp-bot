@@ -51,6 +51,8 @@ def erlc_headers():
 
 def add_log(guild_id: str, action: str, target_user: str, role_name: str, performed_by: str, reason: str, notes: str = "") -> int:
     try:
+        print("LOG TEST: function is running")
+       
         result = supabase.table("audit_logs").insert({
             "guild_id": guild_id,
             "action": action,
