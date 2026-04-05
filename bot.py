@@ -14,9 +14,29 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ER:LC API
 ERLC_BASE_URL = "https://api.policeroleplay.community/v1"
 
+# Webhook
+LOG_WEBHOOK = os.environ.get("LOG_WEBHOOK", "")
+
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
+
+
+def send_webhook(title: str, description: str, color: int, fields: list = None):
+    """Send a log to the Discord webhook."""
+    if not LOG_WEBHOOK:
+        return
+    try:
+        embed = {
+            "title": title,
+            "description": description,
+            "color": color,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "fields": fields or []
+        }
+        requests.post(LOG_WEBHOOK, json={"embeds": [embed]}, timeout=5)
+    except Exception as e:
+        print(f"Webhook error: {e}")
 
 
 class PaginationView(discord.ui.View):
@@ -88,7 +108,6 @@ def save_guild_config(guild_id: str, config: dict):
 
 
 def has_role(user, role_ids_str: str) -> bool:
-    """Check if user has any of the roles in a comma-separated role ID string."""
     if not role_ids_str:
         return False
     role_ids = [r.strip() for r in role_ids_str.split(",") if r.strip()]
@@ -96,7 +115,6 @@ def has_role(user, role_ids_str: str) -> bool:
 
 
 async def send_to_channel(guild: discord.Guild, channel_id: str, embed: discord.Embed):
-    """Send embed to a specific channel by ID."""
     if not channel_id:
         return
     try:
@@ -118,6 +136,7 @@ class MyBot(commands.Bot):
     async def on_ready(self):
         if self.user:
             print(f'Logged in as {self.user.name} (ID: {self.user.id})')
+            send_webhook("✅ Bot Online", f"**{self.user.name}** has connected to Discord.", 0x4ade80)
         print('------')
 
 
@@ -146,6 +165,10 @@ async def erlc_status(interaction: discord.Interaction):
             embed.add_field(name="Join Key", value=data.get("JoinKey", "N/A"), inline=True)
             embed.add_field(name="Queue", value=str(data.get("Queue", 0)), inline=True)
             await interaction.followup.send(embed=embed)
+            send_webhook("🚔 ER:LC Status Checked", f"Status checked by **{interaction.user.display_name}**", 0x60a5fa, [
+                {"name": "Players", "value": str(data.get("CurrentPlayers", 0)), "inline": True},
+                {"name": "Join Key", "value": data.get("JoinKey", "N/A"), "inline": True}
+            ])
         elif response.status_code == 422:
             await interaction.followup.send("No active session found. Start a session first!", ephemeral=True)
         else:
@@ -188,6 +211,10 @@ async def players(interaction: discord.Interaction):
                 view = PaginationView(pages)
                 view.update_buttons()
                 await interaction.followup.send(embed=pages[0], view=view)
+
+            send_webhook("🎮 Players List Checked", f"Player list checked by **{interaction.user.display_name}**", 0x60a5fa, [
+                {"name": "Total Players", "value": str(len(data)), "inline": True}
+            ])
         elif response.status_code == 422:
             await interaction.followup.send("No active session found.", ephemeral=True)
         else:
@@ -225,6 +252,10 @@ async def killlogs(interaction: discord.Interaction):
             if killlog_channel and interaction.guild:
                 await send_to_channel(interaction.guild, killlog_channel, embed)
             await interaction.followup.send(embed=embed)
+
+            send_webhook("💀 Kill Logs Checked", f"Kill logs checked by **{interaction.user.display_name}**", 0xf87171, [
+                {"name": "Total Kills", "value": str(len(data)), "inline": True}
+            ])
         elif response.status_code == 422:
             await interaction.followup.send("No active session found.", ephemeral=True)
         else:
@@ -261,6 +292,10 @@ async def modcalls(interaction: discord.Interaction):
             if modcall_channel and interaction.guild:
                 await send_to_channel(interaction.guild, modcall_channel, embed)
             await interaction.followup.send(embed=embed)
+
+            send_webhook("📢 Mod Calls Checked", f"Mod calls checked by **{interaction.user.display_name}**", 0xfb923c, [
+                {"name": "Active Mod Calls", "value": str(len(data)), "inline": True}
+            ])
         elif response.status_code == 422:
             await interaction.followup.send("No active session found.", ephemeral=True)
         else:
@@ -306,6 +341,10 @@ async def session_start(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed)
 
     add_log(str(interaction.guild.id), "session_start", "Server", "N/A", interaction.user.display_name, "Session started")
+    send_webhook("🟢 Session Started", f"Session started by **{interaction.user.display_name}**", 0x4ade80, [
+        {"name": "Server", "value": interaction.guild.name, "inline": True},
+        {"name": "Join Key", "value": server_data.get("JoinKey", "N/A"), "inline": True}
+    ])
 
 
 @bot.tree.command(name="session_end", description="Announces a session has ended")
@@ -333,6 +372,9 @@ async def session_end(interaction: discord.Interaction):
         await interaction.followup.send(embed=embed)
 
     add_log(str(interaction.guild.id), "session_end", "Server", "N/A", interaction.user.display_name, "Session ended")
+    send_webhook("🔴 Session Ended", f"Session ended by **{interaction.user.display_name}**", 0xf87171, [
+        {"name": "Server", "value": interaction.guild.name, "inline": True}
+    ])
 
 
 # ──────────────────────────────────────────
@@ -372,6 +414,14 @@ async def setup(
         interaction.user.display_name, "Initial Setup / Role Update",
         f"Staff: {staff_role.name}, Admin: {admin_role.name}, HR: {hr_role.name}, Log: #{log_channel.name}"
     )
+
+    send_webhook("⚙️ Bot Setup", f"Bot configured by **{interaction.user.display_name}**", 0xc084fc, [
+        {"name": "Server", "value": interaction.guild.name, "inline": True},
+        {"name": "Staff Role", "value": staff_role.name, "inline": True},
+        {"name": "Admin Role", "value": admin_role.name, "inline": True},
+        {"name": "HR Role", "value": hr_role.name, "inline": True},
+        {"name": "Log Channel", "value": f"#{log_channel.name}", "inline": True}
+    ])
 
     await interaction.followup.send(
         f"Successfully configured server:\n"
@@ -444,10 +494,17 @@ async def promote(interaction: discord.Interaction, member: discord.Member, role
 
         await interaction.followup.send(content=f"{member.mention} {interaction.user.mention}", embed=embed)
 
-        # Send to promote channel if set, otherwise log channel
         promote_channel = config.get("promote_channel_id") or config.get("log_channel_id")
         if promote_channel:
             await send_to_channel(interaction.guild, promote_channel, embed)
+
+        send_webhook("🟢 Member Promoted", f"**{member.display_name}** was promoted", 0x4ade80, [
+            {"name": "Promoted By", "value": interaction.user.display_name, "inline": True},
+            {"name": "New Role", "value": role.name, "inline": True},
+            {"name": "Reason", "value": reason, "inline": False},
+            {"name": "Notes", "value": notes or "None", "inline": True},
+            {"name": "Log ID", "value": str(log_id), "inline": True}
+        ])
     except discord.Forbidden:
         await interaction.followup.send("I don't have permission to add that role.", ephemeral=True)
     except Exception as e:
@@ -518,6 +575,14 @@ async def infraction_issue(interaction: discord.Interaction, member: discord.Mem
         infraction_channel = config.get("infraction_channel_id") or config.get("log_channel_id")
         if infraction_channel:
             await send_to_channel(interaction.guild, infraction_channel, embed)
+
+        send_webhook("🔴 Infraction Issued", f"**{member.display_name}** received an infraction", 0xf87171, [
+            {"name": "Issued By", "value": interaction.user.display_name, "inline": True},
+            {"name": "Removed Role", "value": role.name, "inline": True},
+            {"name": "Reason", "value": reason, "inline": False},
+            {"name": "Notes", "value": notes or "None", "inline": True},
+            {"name": "Infraction ID", "value": str(log_id), "inline": True}
+        ])
     except discord.Forbidden:
         await interaction.followup.send("I don't have permission to remove that role.", ephemeral=True)
     except Exception as e:
@@ -570,6 +635,11 @@ async def void_infraction(interaction: discord.Interaction, infraction_id: int):
         void_channel = config.get("void_channel_id") or config.get("log_channel_id")
         if void_channel:
             await send_to_channel(interaction.guild, void_channel, embed)
+
+        send_webhook("🟠 Infraction Voided", f"Infraction **#{infraction_id}** voided by **{interaction.user.display_name}**", 0xfb923c, [
+            {"name": "Voided By", "value": interaction.user.display_name, "inline": True},
+            {"name": "Infraction ID", "value": str(infraction_id), "inline": True}
+        ])
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
@@ -628,6 +698,10 @@ async def history(interaction: discord.Interaction):
         view.update_buttons()
         await interaction.followup.send(embed=pages[0], view=view)
 
+    send_webhook("📋 History Checked", f"Audit history checked by **{interaction.user.display_name}**", 0x60a5fa, [
+        {"name": "Logs Found", "value": str(len(recent_logs)), "inline": True}
+    ])
+
 
 # ──────────────────────────────────────────
 # USERINFO
@@ -683,6 +757,10 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
     embed.add_field(name=f"Roles [{len(roles)}]", value=" ".join(roles) if roles else "None", inline=False)
     await interaction.followup.send(embed=embed)
 
+    send_webhook("👤 User Info Checked", f"User info checked by **{interaction.user.display_name}**", 0x60a5fa, [
+        {"name": "Target", "value": target_member.display_name, "inline": True}
+    ])
+
 
 # ──────────────────────────────────────────
 # HELP
@@ -706,6 +784,8 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/session_start", value="Announce a session is starting", inline=False)
     embed.add_field(name="/session_end", value="Announce a session has ended", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    send_webhook("❓ Help Command Used", f"Help command used by **{interaction.user.display_name}**", 0xc084fc)
 
 
 # ──────────────────────────────────────────
@@ -749,6 +829,10 @@ async def embed_command(
     try:
         await channel.send(embed=embed)
         await interaction.followup.send(f"Embed sent to {channel.mention}!", ephemeral=True)
+        send_webhook("📨 Embed Sent", f"Embed sent by **{interaction.user.display_name}**", 0xc084fc, [
+            {"name": "Channel", "value": f"#{channel.name}", "inline": True},
+            {"name": "Title", "value": title, "inline": True}
+        ])
     except discord.Forbidden:
         await interaction.followup.send("I don't have permission to send messages in that channel.", ephemeral=True)
     except Exception as e:
@@ -765,6 +849,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         msg = "You don't have permission to use this command."
     else:
         msg = f"An error occurred: {error}"
+        send_webhook("⚠️ Command Error", str(error), 0xf87171)
     if not interaction.response.is_done():
         await interaction.response.send_message(msg, ephemeral=True)
     else:
