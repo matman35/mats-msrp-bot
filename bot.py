@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
+import random
 import requests
 from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
@@ -894,6 +895,148 @@ async def userinfo(interaction: discord.Interaction, member: discord.Member = No
 
 
 # ──────────────────────────────────────────
+# FUN COMMANDS
+# ──────────────────────────────────────────
+
+JOKES = [
+    "Why don't scientists trust atoms? Because they make up everything.",
+    "I told my computer I needed a break, and it said no problem — it'll go to sleep too.",
+    "Why did the scarecrow win an award? He was outstanding in his field.",
+    "Why do programmers prefer dark mode? Because light attracts bugs.",
+    "I'm reading a book about anti-gravity. It's impossible to put down.",
+    "Why did the police officer go to the bakery? He heard there was a rob-bery.",
+    "What do you call a fish with no eyes? A fsh.",
+    "I used to be a banker, but I lost interest.",
+    "Why don't skeletons fight each other? They don't have the guts.",
+    "Parallel lines have so much in common. It's a shame they'll never meet.",
+    "What do you call a bear with no teeth? A gummy bear.",
+    "I would tell you a chemistry joke, but I know I wouldn't get a reaction.",
+    "Why did the coffee file a police report? It got mugged.",
+    "What's orange and sounds like a parrot? A carrot.",
+    "I only know 25 letters of the alphabet. I don't know y.",
+]
+
+EIGHTBALL_RESPONSES = [
+    "It is certain.",
+    "Without a doubt.",
+    "Yes, definitely.",
+    "You may rely on it.",
+    "As I see it, yes.",
+    "Most likely.",
+    "Outlook good.",
+    "Yes.",
+    "Signs point to yes.",
+    "Reply hazy, try again.",
+    "Ask again later.",
+    "Better not tell you now.",
+    "Cannot predict now.",
+    "Concentrate and ask again.",
+    "Don't count on it.",
+    "My reply is no.",
+    "My sources say no.",
+    "Outlook not so good.",
+    "Very doubtful.",
+]
+
+
+@bot.tree.command(name="joke", description="Tells a random joke")
+async def joke(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="😂 Random Joke",
+        description=random.choice(JOKES),
+        color=discord.Color.gold()
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="8ball", description="Ask the magic 8-ball a question")
+@app_commands.describe(question="The question you want to ask")
+async def eightball(interaction: discord.Interaction, question: str):
+    embed = discord.Embed(
+        title="🎱 Magic 8-Ball",
+        color=discord.Color.dark_purple()
+    )
+    embed.add_field(name="Question", value=question, inline=False)
+    embed.add_field(name="Answer", value=random.choice(EIGHTBALL_RESPONSES), inline=False)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="coinflip", description="Flips a coin")
+async def coinflip(interaction: discord.Interaction):
+    result = random.choice(["Heads", "Tails"])
+    embed = discord.Embed(
+        title="🪙 Coin Flip",
+        description=f"The coin landed on **{result}**!",
+        color=discord.Color.yellow()
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="dice", description="Rolls a dice")
+@app_commands.describe(sides="Number of sides on the dice (default 6)")
+async def dice(interaction: discord.Interaction, sides: int = 6):
+    if sides < 2:
+        await interaction.response.send_message("The dice needs at least 2 sides!", ephemeral=True)
+        return
+    if sides > 1000:
+        await interaction.response.send_message("Let's keep it under 1000 sides!", ephemeral=True)
+        return
+    result = random.randint(1, sides)
+    embed = discord.Embed(
+        title="🎲 Dice Roll",
+        description=f"You rolled a **{result}** (out of {sides})!",
+        color=discord.Color.teal()
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="rps", description="Play rock, paper, scissors against the bot")
+@app_commands.describe(choice="Your choice")
+@app_commands.choices(choice=[
+    app_commands.Choice(name="Rock", value="rock"),
+    app_commands.Choice(name="Paper", value="paper"),
+    app_commands.Choice(name="Scissors", value="scissors"),
+])
+async def rps(interaction: discord.Interaction, choice: app_commands.Choice[str]):
+    options = ["rock", "paper", "scissors"]
+    bot_choice = random.choice(options)
+    user_choice = choice.value
+
+    if user_choice == bot_choice:
+        result = "It's a tie!"
+        color = discord.Color.light_grey()
+    elif (
+        (user_choice == "rock" and bot_choice == "scissors")
+        or (user_choice == "paper" and bot_choice == "rock")
+        or (user_choice == "scissors" and bot_choice == "paper")
+    ):
+        result = "You win!"
+        color = discord.Color.green()
+    else:
+        result = "I win!"
+        color = discord.Color.red()
+
+    emoji_map = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+    embed = discord.Embed(title="🤜 Rock Paper Scissors 🤛", color=color)
+    embed.add_field(name="You chose", value=f"{emoji_map[user_choice]} {user_choice.capitalize()}", inline=True)
+    embed.add_field(name="I chose", value=f"{emoji_map[bot_choice]} {bot_choice.capitalize()}", inline=True)
+    embed.add_field(name="Result", value=result, inline=False)
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="avatar", description="Shows a user's avatar")
+@app_commands.describe(member="The member whose avatar to show (leave blank for yourself)")
+async def avatar(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
+    embed = discord.Embed(
+        title=f"{target.display_name}'s Avatar",
+        color=discord.Color.blurple()
+    )
+    embed.set_image(url=target.display_avatar.url)
+    await interaction.response.send_message(embed=embed)
+
+
+# ──────────────────────────────────────────
 # HELP
 # ──────────────────────────────────────────
 
@@ -918,6 +1061,13 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/modcalls", value="View active mod calls", inline=False)
     embed.add_field(name="/session_start", value="Announce a session is starting", inline=False)
     embed.add_field(name="/session_end", value="Announce a session has ended", inline=False)
+    embed.add_field(name="─── Fun ───", value="\u200b", inline=False)
+    embed.add_field(name="/joke", value="Tells a random joke", inline=False)
+    embed.add_field(name="/8ball", value="Ask the magic 8-ball a question", inline=False)
+    embed.add_field(name="/coinflip", value="Flips a coin", inline=False)
+    embed.add_field(name="/dice", value="Rolls a dice (specify number of sides, default 6)", inline=False)
+    embed.add_field(name="/rps", value="Play rock, paper, scissors against the bot", inline=False)
+    embed.add_field(name="/avatar", value="Shows a user's avatar", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
