@@ -965,4 +965,11 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         await interaction.followup.send(msg, ephemeral=True)
 
 
-bot.run(os.environ["DISCORD_TOKEN"])
+token = os.getenv("DISCORD_TOKEN")
+
+if not token:
+    raise ValueError("DISCORD_TOKEN environment variable is missing!")
+
+print(f"Loaded token length: {len(token)}")
+
+bot.run(token.strip())
