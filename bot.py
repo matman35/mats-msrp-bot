@@ -4,6 +4,8 @@ from discord.ext import commands, tasks
 import os
 import random
 import requests
+import threading
+from flask import Flask
 from datetime import datetime, timedelta, timezone
 from supabase import create_client, Client
 
@@ -15,6 +17,12 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ER:LC API
 ERLC_BASE_URL = "https://api.policeroleplay.community/v1"
 
+# OpenAI API (for AI chat replies)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = "gpt-4o-mini"  # fast, cheap model for casual replies
+AI_HISTORY_LIMIT = 10  # number of past messages to remember per channel
+ai_channel_history = {}  # channel_id -> list of {"role": ..., "content": ...}
+
 # Webhook
 LOG_WEBHOOK = os.environ.get("LOG_WEBHOOK", "")
 
@@ -24,6 +32,29 @@ seen_erlc_players = set()
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
+
+
+# ──────────────────────────────────────────
+# KEEP-ALIVE WEB SERVER (for Render's port scan + uptime pings)
+# ──────────────────────────────────────────
+
+keepalive_app = Flask('')
+
+
+@keepalive_app.route('/')
+def keepalive_home():
+    return "Bot is alive!"
+
+
+def run_keepalive():
+    port = int(os.environ.get("PORT", 8080))
+    keepalive_app.run(host='0.0.0.0', port=port)
+
+
+def start_keepalive():
+    t = threading.Thread(target=run_keepalive)
+    t.daemon = True
+    t.start()
 
 
 def send_webhook(title: str, description: str, color: int, fields: list = None):
@@ -171,6 +202,59 @@ def get_roblox_user(username: str) -> dict:
     return {}
 
 
+def get_ai_reply(channel_id: str, user_display_name: str, user_message: str) -> str:
+    """Call OpenAI's chat API with rolling per-channel history and return the reply text."""
+    if not OPENAI_API_KEY:
+        return "AI chat isn't configured yet (missing OPENAI_API_KEY)."
+
+    history = ai_channel_history.get(channel_id, [])
+
+    system_prompt = {
+        "role": "system",
+        "content": (
+            "You are a friendly, casual Discord bot assistant for a Roblox ER:LC roleplay server. "
+            "Keep replies short, conversational, and helpful. Avoid long paragraphs."
+        )
+    }
+
+    messages = [system_prompt] + history + [
+        {"role": "user", "content": f"{user_display_name}: {user_message}"}
+    ]
+
+    try:
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": OPENAI_MODEL,
+                "messages": messages,
+                "max_tokens": 300,
+                "temperature": 0.8
+            },
+            timeout=20
+        )
+
+        if response.status_code != 200:
+            print(f"OpenAI API error: {response.status_code} {response.text}")
+            return "Sorry, I had trouble thinking of a reply just now."
+
+        data = response.json()
+        reply = data["choices"][0]["message"]["content"].strip()
+
+        # Update rolling history
+        history.append({"role": "user", "content": f"{user_display_name}: {user_message}"})
+        history.append({"role": "assistant", "content": reply})
+        ai_channel_history[channel_id] = history[-AI_HISTORY_LIMIT:]
+
+        return reply
+    except Exception as e:
+        print(f"OpenAI request failed: {e}")
+        return "Sorry, something went wrong reaching the AI."
+
+
 class MyBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix='!', intents=intents)
@@ -235,6 +319,41 @@ class MyBot(commands.Bot):
         send_webhook("📤 Member Left", f"**{member.name}** left the server", 0xf87171, [
             {"name": "Server", "value": member.guild.name, "inline": True}
         ])
+
+    async def on_message(self, message: discord.Message):
+        # Ignore the bot's own messages
+        if message.author.id == self.user.id:
+            return
+
+        # Let command_prefix commands (e.g. "!") still work
+        await self.process_commands(message)
+
+        is_mentioned = self.user in message.mentions
+        is_reply_to_bot = False
+        if message.reference and message.reference.resolved:
+            ref = message.reference.resolved
+            if isinstance(ref, discord.Message) and ref.author.id == self.user.id:
+                is_reply_to_bot = True
+
+        if not (is_mentioned or is_reply_to_bot):
+            return
+
+        # Strip the mention text out of the message content
+        content = message.content
+        for mention in message.mentions:
+            content = content.replace(f"<@{mention.id}>", "").replace(f"<@!{mention.id}>", "")
+        content = content.strip()
+
+        if not content:
+            content = "Hello!"
+
+        async with message.channel.typing():
+            reply = get_ai_reply(str(message.channel.id), message.author.display_name, content)
+
+        try:
+            await message.reply(reply, mention_author=False)
+        except Exception as e:
+            print(f"Failed to send AI reply: {e}")
 
     @tasks.loop(seconds=15)
     async def erlc_join_tracker(self):
@@ -1121,5 +1240,7 @@ if not token:
     raise ValueError("DISCORD_TOKEN environment variable is missing!")
 
 print(f"Loaded token length: {len(token)}")
+
+start_keepalive()
 
 bot.run(token.strip())
